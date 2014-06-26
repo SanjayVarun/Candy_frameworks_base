@@ -159,8 +159,6 @@ import com.android.server.policy.keyguard.KeyguardServiceDelegate;
 import com.android.server.policy.keyguard.KeyguardServiceDelegate.DrawnListener;
 import com.android.server.statusbar.StatusBarManagerInternal;
 
-import dalvik.system.DexClassLoader;
-
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
@@ -168,6 +166,8 @@ import java.io.PrintWriter;
 import java.util.HashSet;
 import java.util.List;
 import java.lang.reflect.Constructor;
+
+import dalvik.system.PathClassLoader;
 
 /**
  * WindowManagerPolicy implementation for the Android phone UI.  This
@@ -1891,10 +1891,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 com.android.internal.R.string.config_deviceKeyHandlerClass);
 
         if (!deviceKeyHandlerLib.isEmpty() && !deviceKeyHandlerClass.isEmpty()) {
-            DexClassLoader loader =  new DexClassLoader(deviceKeyHandlerLib,
-                    new ContextWrapper(mContext).getCacheDir().getAbsolutePath(),
-                    null,
-                    ClassLoader.getSystemClassLoader());
+            PathClassLoader loader =  new PathClassLoader(deviceKeyHandlerLib,
+                    getClass().getClassLoader());
+					
             try {
                 Class<?> klass = loader.loadClass(deviceKeyHandlerClass);
                 Constructor<?> constructor = klass.getConstructor(Context.class);
@@ -3686,18 +3685,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             final int metaState = event.getMetaState();
             final boolean initialDown = event.getAction() == KeyEvent.ACTION_DOWN
                     && event.getRepeatCount() == 0;
-
-        // Specific device key handling
-        if (mDeviceKeyHandler != null) {
-            try {
-                // The device only should consume known keys.
-                if (mDeviceKeyHandler.handleKeyEvent(event)) {
-                    return null;
-                }
-            } catch (Exception e) {
-                Slog.w(TAG, "Could not dispatch event to device key handler", e);
-            }
-        }
 
             // Check for fallback actions specified by the key character map.
             final FallbackAction fallbackAction;
@@ -5849,7 +5836,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (isValidGlobalKey(keyCode)
                 && mGlobalKeyManager.shouldHandleGlobalKey(keyCode, event)) {
             if (isWakeKey) {
-                wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey, "android.policy:KEY");
+                wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey,
+                       "android.policy:KEY", true);
             }
             return result;
         }
@@ -6180,7 +6168,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         if (isWakeKey) {
-            wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey, "android.policy:KEY");
+            wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey, "android.policy:KEY",
+                    event.getKeyCode() == KeyEvent.KEYCODE_WAKEUP); // Check prox only on wake key
         }
 
         return result;
@@ -6614,6 +6603,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private boolean wakeUp(long wakeTime, boolean wakeInTheaterMode, String reason) {
+        return wakeUp(wakeTime, wakeInTheaterMode, reason, false);
+    }
+
+    private boolean wakeUp(long wakeTime, boolean wakeInTheaterMode, String reason,
+            final boolean withProximityCheck) {
         final boolean theaterModeEnabled = isTheaterModeEnabled();
         if (!wakeInTheaterMode && theaterModeEnabled) {
             return false;
@@ -6624,7 +6618,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     Settings.Global.THEATER_MODE_ON, 0);
         }
 
-        mPowerManager.wakeUp(wakeTime, reason);
+        if (withProximityCheck) {
+            mPowerManager.wakeUpWithProximityCheck(wakeTime, reason);
+        } else {
+            mPowerManager.wakeUp(wakeTime, reason);
+        }
         return true;
     }
 
